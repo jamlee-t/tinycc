@@ -37,11 +37,13 @@
 #include <sys/syscall.h>
 #endif
 
+#include "config.h"
+
 #define BOUND_DEBUG             (1)
 #define BOUND_STATISTIC         (1)
 
 #if BOUND_DEBUG
- #define dprintf(a...)         if (print_calls) fprintf(a)
+ #define dprintf(a...)         if (print_calls) { bounds_loc(a); }
 #else
  #define dprintf(a...)
 #endif
@@ -161,7 +163,7 @@ static pthread_spinlock_t bounds_spin;
 #define HAVE_TLS_FUNC          (1)
 #define HAVE_TLS_VAR           (0)
 #endif
-#if defined TCC_MUSL || defined __ANDROID__
+#if defined CONFIG_TCC_MUSL || defined __ANDROID__
 # undef HAVE_CTYPE
 #endif
 #endif
@@ -225,7 +227,7 @@ typedef struct alloca_list_struct {
 #define BOUND_GET_TID(id)	id = GetCurrentThreadId()
 #elif defined(__OpenBSD__)
 #define BOUND_TID_TYPE		pid_t
-#define BOUND_GET_TID(id)	id = syscall (SYS_getthrid)
+#define BOUND_GET_TID(id)	id = getthrid()
 #elif defined(__FreeBSD__)
 #define BOUND_TID_TYPE		pid_t
 #define BOUND_GET_TID(id)	syscall (SYS_thr_self, &id)
@@ -292,7 +294,9 @@ DLL_EXPORT char *__bound_strncpy(char *dst, const char *src, size_t n);
 DLL_EXPORT int __bound_strcmp(const char *s1, const char *s2);
 DLL_EXPORT int __bound_strncmp(const char *s1, const char *s2, size_t n);
 DLL_EXPORT char *__bound_strcat(char *dest, const char *src);
+DLL_EXPORT char *__bound_strncat(char *dest, const char *src, size_t n);
 DLL_EXPORT char *__bound_strchr(const char *string, int ch);
+DLL_EXPORT char *__bound_strrchr(const char *string, int ch);
 DLL_EXPORT char *__bound_strdup(const char *s);
 
 #if defined(__arm__) && defined(__ARM_EABI__)
@@ -321,7 +325,7 @@ DLL_EXPORT void *__aeabi_memset(void *dst, int c, size_t size);
 #define BOUND_REALLOC(a,b)       realloc(a,b)
 #define BOUND_CALLOC(a,b)        calloc(a,b)
 DLL_EXPORT void *__bound_malloc(size_t size, const void *caller);
-DLL_EXPORT void *__bound_memalign(size_t size, size_t align, const void *caller);
+DLL_EXPORT void *__bound_memalign(size_t align, size_t size, const void *caller);
 DLL_EXPORT void __bound_free(void *ptr, const void *caller);
 DLL_EXPORT void *__bound_realloc(void *ptr, size_t size, const void *caller);
 DLL_EXPORT void *__bound_calloc(size_t nmemb, size_t size);
@@ -424,7 +428,9 @@ static unsigned long long bound_strncpy_count;
 static unsigned long long bound_strcmp_count;
 static unsigned long long bound_strncmp_count;
 static unsigned long long bound_strcat_count;
+static unsigned long long bound_strncat_count;
 static unsigned long long bound_strchr_count;
+static unsigned long long bound_strrchr_count;
 static unsigned long long bound_strdup_count;
 static unsigned long long bound_not_found;
 #define INCR_COUNT(x)          ++x
@@ -456,6 +462,13 @@ int tcc_backtrace(const char *fmt, ...);
         bound_warning(__VA_ARGS__); \
         if (never_fatal == 0)       \
             exit(255);              \
+    } while (0)
+
+#define bounds_loc(fp, ...) \
+    do {                            \
+        WAIT_SEM (); \
+        tcc_backtrace("^bcheck.c^\001" __VA_ARGS__); \
+        POST_SEM (); \
     } while (0)
 
 static void bound_alloc_error(const char *s)
@@ -548,7 +561,9 @@ void * __bound_ptr_add(void *p, size_t offset)
             if (tree->is_invalid || addr + offset > tree->size) {
                 POST_SEM ();
                 if (print_warn_ptr_add)
-                    bound_warning("%p is outside of the region", p + offset);
+                    bound_warning("%p is outside of the region (0x%lx..0x%lx)",
+                                  p + offset, (long)tree->start,
+                                  (long)(tree->start + tree->size - 1));
                 if (never_fatal <= 0)
                     return INVALID_POINTER; /* return an invalid pointer */
                 return p + offset;
@@ -594,7 +609,9 @@ void * __bound_ptr_indir ## dsize (void *p, size_t offset)                     \
         if (addr <= tree->size) {                                              \
             if (tree->is_invalid || addr + offset + dsize > tree->size) {      \
                 POST_SEM ();                                                   \
-                bound_warning("%p is outside of the region", p + offset); \
+                bound_warning("%p is outside of the region (0x%lx..0x%lx)",    \
+                              p + offset, (long)tree->start,                   \
+                              (long)(tree->start + tree->size - 1));           \
                 if (never_fatal <= 0)                                          \
                     return INVALID_POINTER; /* return an invalid pointer */    \
                 return p + offset;                                             \
@@ -618,7 +635,8 @@ BOUND_PTR_INDIR(8)
 BOUND_PTR_INDIR(12)
 BOUND_PTR_INDIR(16)
 
-#if defined(__GNUC__) && (__GNUC__ >= 6)
+/* Needed when using ...libtcc1-usegcc=yes in lib/Makefile */
+#if (defined(__GNUC__) && (__GNUC__ >= 6)) || defined(__clang__)
 /*
  * At least gcc 6.2 complains when __builtin_frame_address is used with
  * nonzero argument.
@@ -923,7 +941,7 @@ void __bound_siglongjmp(jmp_buf env, int val)
 }
 #endif
 
-#if defined(__GNUC__) && (__GNUC__ >= 6)
+#if (defined(__GNUC__) && (__GNUC__ >= 6)) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 
@@ -1093,11 +1111,9 @@ add_bounds:
     while (p[0] != 0) {
         tree = splay_insert(p[0], p[1], tree);
 #if BOUND_DEBUG
-        if (print_calls) {
-            dprintf(stderr, "%s, %s(): static var %p 0x%lx\n",
-                    __FILE__, __FUNCTION__,
-                    (void *) p[0], (unsigned long) p[1]);
-        }
+        dprintf(stderr, "%s, %s(): static var %p 0x%lx\n",
+                __FILE__, __FUNCTION__,
+                (void *) p[0], (unsigned long) p[1]);
 #endif
         p += 2;
     }
@@ -1173,7 +1189,7 @@ void __attribute__((destructor)) __bound_exit(void)
     dprintf(stderr, "%s, %s():\n", __FILE__, __FUNCTION__);
 
     if (inited) {
-#if !defined(_WIN32) && !defined(__APPLE__) && !defined TCC_MUSL && \
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined CONFIG_TCC_MUSL && \
     !defined(__OpenBSD__) && !defined(__FreeBSD__) && !defined(__NetBSD__) && \
     !defined(__ANDROID__)
         if (print_heap) {
@@ -1259,7 +1275,9 @@ void __attribute__((destructor)) __bound_exit(void)
             fprintf (stderr, "bound_strcmp_count       %llu\n", bound_strcmp_count);
             fprintf (stderr, "bound_strncmp_count      %llu\n", bound_strncmp_count);
             fprintf (stderr, "bound_strcat_count       %llu\n", bound_strcat_count);
+            fprintf (stderr, "bound_strncat_count      %llu\n", bound_strncat_count);
             fprintf (stderr, "bound_strchr_count       %llu\n", bound_strchr_count);
+            fprintf (stderr, "bound_strrchr_count      %llu\n", bound_strrchr_count);
             fprintf (stderr, "bound_strdup_count       %llu\n", bound_strdup_count);
             fprintf (stderr, "bound_not_found          %llu\n", bound_not_found);
 #endif
@@ -1505,9 +1523,9 @@ void *__bound_malloc(size_t size, const void *caller)
 }
 
 #if MALLOC_REDIR
-void *memalign(size_t size, size_t align)
+void *memalign(size_t align, size_t size)
 #else
-void *__bound_memalign(size_t size, size_t align, const void *caller)
+void *__bound_memalign(size_t align, size_t size, const void *caller)
 #endif
 {
     void *ptr;
@@ -1516,7 +1534,7 @@ void *__bound_memalign(size_t size, size_t align, const void *caller)
     /* we allocate one more byte to ensure the regions will be
        separated by at least one byte. With the glibc malloc, it may
        be in fact not necessary */
-    ptr = BOUND_MEMALIGN(size + 1, align);
+    ptr = BOUND_MEMALIGN(align, size + 1);
 #else
     if (align > 4) {
         /* XXX: handle it ? */
@@ -1940,6 +1958,24 @@ char *__bound_strcat(char *dest, const char *src)
     return strcat(r, s);
 }
 
+char *__bound_strncat(char *dest, const char *src, size_t n)
+{
+    char *r = dest;
+    const char *s = src;
+    size_t len = n;
+
+    dprintf(stderr, "%s, %s(): %p, %p, 0x%lx\n",
+            __FILE__, __FUNCTION__, dest, src, (unsigned long)n);
+    INCR_COUNT(bound_strncat_count);
+    while (*dest++);
+    while (len-- && *src++);
+    __bound_check(r, (dest - r) + (src - s) - 1, "strncat dest");
+    __bound_check(s, src - s, "strncat src");
+    if (check_overlap(r, (dest - r) + (src - s) - 1, s, src - s, "strncat"))
+        return dest;
+    return strncat(r, s, n);
+}
+
 char *__bound_strchr(const char *s, int c)
 {
     const unsigned char *str = (const unsigned char *) s;
@@ -1954,6 +1990,24 @@ char *__bound_strchr(const char *s, int c)
         ++str;
     }
     __bound_check(s, ((const char *)str - s) + 1, "strchr");
+    return *str == ch ? (char *) str : NULL;
+}
+
+char *__bound_strrchr(const char *s, int c)
+{
+    const unsigned char *str = (const unsigned char *) s;
+    unsigned char ch = c;
+
+    dprintf(stderr, "%s, %s(): %p, %d\n",
+            __FILE__, __FUNCTION__, s, ch);
+    INCR_COUNT(bound_strrchr_count);
+    while (*str++);
+    __bound_check(s, (const char *)str - s, "strrchr");
+    while (str != (const unsigned char *)s) {
+        if (*--str == ch)
+            break;
+    }
+    __bound_check(s, (const char *)str - s, "strrchr");
     return *str == ch ? (char *) str : NULL;
 }
 

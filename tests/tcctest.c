@@ -140,11 +140,6 @@ static int onetwothree = 123;
 #define B3 4
 #endif
 
-#ifdef __TINYC__
-/* We try to handle this syntax.  Make at least sure it doesn't segfault.  */
-char invalid_function_def()[] {return 0;}
-#endif
-
 #define __INT64_C(c)	c ## LL
 #define INT64_MIN	(-__INT64_C(9223372036854775807)-1)
 
@@ -341,7 +336,8 @@ static struct recursive_macro { int rm_field; } G;
     WRAP((printf("rm_field = %d %d\n", rm_field, WRAP(rm_field))));
 }
 
-int op(a,b)
+#if __TINYC__
+int op(a, b)
 {
     return a / b;
 }
@@ -354,6 +350,7 @@ int ret(a)
         return 2;
     return 0;
 }
+#endif
 
 #if !defined(__TINYC__) && (__GNUC__ >= 8)
 /* Old GCCs don't regard "foo"[1] as constant, even in GNU dialect. */
@@ -710,7 +707,7 @@ int tab2[3][2];
 
 int g;
 
-void f1(g)
+void f1(int g)
 {
     printf("g1=%d\n", g);
 }
@@ -888,7 +885,7 @@ int tab4[10];
 
 void expr_ptr_test()
 {
-    int *p, *q;
+    int arr[10], *p, *q;
     int i = -1;
 
     p = tab4;
@@ -941,6 +938,9 @@ void expr_ptr_test()
     i = ((long)p) >> 32;
     printf("largeptr: %p %d\n", p, i);
 #endif
+    p = &arr[0];
+    q = p + 3;
+    printf ("%d\n", (int)((p - q) / 3));
 }
 
 void expr_cmp_test()
@@ -1220,6 +1220,13 @@ static unsigned int calc_vm_flags(unsigned int prot)
   return prot_bits;
 }
 
+enum cast_enum { FIRST, LAST };
+
+static void tst_cast(enum cast_enum ce)
+{
+    printf("%d\n", ce);
+}
+
 void bool_test()
 {
     int *s, a, b, t, f, i;
@@ -1265,6 +1272,12 @@ void bool_test()
     printf("exp=%d\n", f == (32 <= a && a <= 3));
     printf("r=%d\n", (t || f) + (t && f));
 
+    /* check that types of casted &&/|| are preserved (here the unsignedness) */
+    t = 1;
+    printf("type of bool: %d\n", (int) ( (~ ((unsigned int) (t && 1))) / 2) );
+    tst_cast(t >= 0 ? FIRST : LAST);
+
+    printf("type of cond: %d\n", (~(t ? 0U : (unsigned int)0)) / 2 );
     /* test ? : cast */
     {
         int aspect_on;
@@ -1492,6 +1505,9 @@ void compound_literal_test(void)
 #endif
 }
 
+
+#if __TINYC__
+
 /* K & R protos */
 
 kr_func1(a, b)
@@ -1510,6 +1526,13 @@ kr_test()
     printf("func2=%d\n", kr_func2(3, 4));
     return 0;
 }
+
+/* We try to handle this syntax.  Make at least sure it doesn't segfault.  */
+char invalid_function_def()[] {return 0;}
+
+#else
+# define kr_test() printf("func1=7\nfunc2=7\n")
+#endif
 
 void num(int n)
 {
@@ -2039,7 +2062,7 @@ void c99_bool_test(void)
     printf("b = %d\n", b);
     b2 = 0;
     printf("sizeof(x ? _Bool : _Bool) = %d (should be sizeof int)\n",
-           sizeof((volatile)a ? b : b2));
+           sizeof ((volatile int)a ? b : b2));
 #endif
 }
 
@@ -2876,7 +2899,8 @@ void relocation_test(void)
     printf("*rel2=%d\n", *rel2);
     fptr();
 #ifdef __LP64__
-    printf("pa_symbol=0x%lx\n", __pa_symbol() >> 63);
+    // compare 'addend' displacement versus conventional arithmetics
+    printf("pa_symbol: %d\n", (long)&rel1 == __pa_symbol() - 0x80000000);
 #endif
 }
 
@@ -2900,7 +2924,15 @@ int cmpfn();
 
 void old_style_function_test(void)
 {
+#if CC_NAME == CC_clang
+    /* recent clang versions (at least 15.0) raise an error:
+       incompatible pointer to integer conversion passing 'void *'
+       For the purpose of this test, pass 1 instead.
+     */
+    old_style_f(1, 2, 3.0);
+#else
     old_style_f((void *)1, 2, 3.0);
+#endif
     decl_func1(NULL);
     decl_func2(NULL);
 }
@@ -3034,7 +3066,7 @@ void c99_vla_test_3d(int s, int arr[2][3][s])
 
 void c99_vla_test_3e(int s, int arr[][3][--s])
 {
-    printf ("%d %d\n", s, arr[1][2][3]);
+    printf ("%d %d %d\n", sizeof arr, s, arr[1][2][3]);
 }
 
 void c99_vla_test_3(void)
@@ -3117,6 +3149,10 @@ void sizeof_test(void)
     printf("sizeof(1 && 1) = %d\n", sizeof(1 && 1));
     printf("sizeof(t || 1) = %d\n", sizeof(t || 1));
     printf("sizeof(0 || 0) = %d\n", sizeof(0 || 0));
+
+    int arr[4], fn();
+    printf("sizeof(0, arr) = %d\n", sizeof(0, arr));
+    printf("sizeof(0, fn) = %d\n", sizeof(0, fn));
 }
 
 void typeof_test(void)
@@ -3251,10 +3287,12 @@ void local_label_test(void)
 /* inline assembler test */
 #if defined(__i386__) || defined(__x86_64__)
 
+typedef __SIZE_TYPE__ word;
+
 /* from linux kernel */
 static char * strncat1(char * dest,const char * src,size_t count)
 {
-long d0, d1, d2, d3;
+word d0, d1, d2, d3;
 __asm__ __volatile__(
 	"repne\n\t"
 	"scasb\n\t"
@@ -3276,7 +3314,7 @@ return dest;
 
 static char * strncat2(char * dest,const char * src,size_t count)
 {
-long d0, d1, d2, d3;
+word d0, d1, d2, d3;
 __asm__ __volatile__(
 	"repne scasb\n\t" /* one-line repne prefix + string op */
 	"dec %1\n\t"
@@ -3297,7 +3335,7 @@ return dest;
 
 static inline void * memcpy1(void * to, const void * from, size_t n)
 {
-size_t d0, d1, d2;
+word d0, d1, d2;
 __asm__ __volatile__(
 	"rep ; movsl\n\t"
 	"testb $2,%b4\n\t"
@@ -3308,14 +3346,14 @@ __asm__ __volatile__(
 	"movsb\n"
 	"2:"
 	: "=&c" (d0), "=&D" (d1), "=&S" (d2)
-	:"0" (n/4), "q" (n),"1" ((size_t) to),"2" ((size_t) from)
+	:"0" (n/4), "q" (n),"1" ((word) to),"2" ((word) from)
 	: "memory");
 return (to);
 }
 
 static inline void * memcpy2(void * to, const void * from, size_t n)
 {
-size_t d0, d1, d2;
+word d0, d1, d2;
 __asm__ __volatile__(
 	"rep movsl\n\t"  /* one-line rep prefix + string op */
 	"testb $2,%b4\n\t"
@@ -3326,7 +3364,7 @@ __asm__ __volatile__(
 	"movsb\n"
 	"2:"
 	: "=&c" (d0), "=&D" (d1), "=&S" (d2)
-	:"0" (n/4), "q" (n),"1" ((size_t) to),"2" ((size_t) from)
+	:"0" (n/4), "q" (n),"1" ((word) to),"2" ((word) from)
 	: "memory");
 return (to);
 }
@@ -3395,12 +3433,12 @@ struct struct123 {
     int b;
 };
 struct struct1231 {
-    unsigned long addr;
+    word addr;
 };
 
-unsigned long mconstraint_test(struct struct1231 *r)
+word mconstraint_test(struct struct1231 *r)
 {
-    unsigned long ret;
+    word ret;
     unsigned int a[2];
     a[0] = 0;
     __asm__ volatile ("lea %2,%0; movl 4(%0),%k0; addl %2,%k0; movl $51,%2; movl $52,4%2; movl $63,%1"
@@ -3422,11 +3460,11 @@ int fls64(unsigned long long x)
 
 void other_constraints_test(void)
 {
-    unsigned long ret;
+    word ret;
     int var;
-#if !defined(_WIN64) && CC_NAME != CC_clang
+#if CC_NAME != CC_clang
     __asm__ volatile ("mov %P1,%0" : "=r" (ret) : "p" (&var));
-    printf ("oc1: %d\n", ret == (unsigned long)&var);
+    printf ("oc1: %d\n", ret == (word)&var);
 #endif
 }
 
@@ -3510,6 +3548,7 @@ void asm_local_label_diff (void)
   printf ("asm_local_label_diff: %d %d\n", alld_stuff[0], alld_stuff[1]);
 }
 #endif
+#endif
 
 /* This checks that static local variables are available from assembler.  */
 void asm_local_statics (void)
@@ -3518,7 +3557,6 @@ void asm_local_statics (void)
   asm("incl %0" : "+m" (localint));
   printf ("asm_local_statics: %d\n", localint);
 }
-#endif
 
 static
 unsigned int set;
@@ -3533,7 +3571,7 @@ void fancy_copy2 (unsigned *in, unsigned *out)
   asm volatile ("mov %0,(%1)" : : "r" (*in), "r" (out) : "memory");
 }
 
-#if defined __x86_64__ && !defined _WIN64
+#if defined __x86_64__
 void clobber_r12(void)
 {
     asm volatile("mov $1, %%r12" ::: "r12");
@@ -3542,9 +3580,9 @@ void clobber_r12(void)
 
 void test_high_clobbers_really(void)
 {
-#if defined __x86_64__ && !defined _WIN64
-    register long val asm("r12");
-    long val2;
+#if defined __x86_64__
+    register word val asm("r12");
+    word val2;
     /* This tests if asm clobbers correctly save/restore callee saved
        registers if they are clobbered and if it's the high 8 x86-64
        registers.  This is fragile for GCC as the constraints do not
@@ -3558,8 +3596,8 @@ void test_high_clobbers_really(void)
 
 void test_high_clobbers(void)
 {
-#if defined __x86_64__ && !defined _WIN64
-    long x1, x2;
+#if defined __x86_64__
+    word x1, x2;
     asm volatile("mov %%r12,%0" :: "m" (x1)); /* save r12 */
     test_high_clobbers_really();
     asm volatile("mov %%r12,%0" :: "m" (x2)); /* new r12 */
@@ -3625,7 +3663,7 @@ void trace_console(long len, long len2)
 
 void test_asm_dead_code(void)
 {
-  long rdi;
+  word rdi;
   /* Try to make sure that xdi contains a zero, and hence will
      lead to a segfault if the next asm is evaluated without
      arguments being set up.  */
@@ -3646,7 +3684,7 @@ void test_asm_dead_code(void)
 
 void test_asm_call(void)
 {
-#if defined __x86_64__ && !defined _WIN64
+#if defined __x86_64__ && !defined _WIN64  && !defined(__APPLE__)
   static char str[] = "PATH";
   char *s;
   /* This tests if a reference to an undefined symbol from an asm
@@ -3658,10 +3696,8 @@ void test_asm_call(void)
      tested here).  */
   /* two pushes so stack remains aligned */
   asm volatile ("push %%rdi; push %%rdi; mov %0, %%rdi;"
-#if 1 && !defined(__TINYC__) && (defined(__PIC__) || defined(__PIE__)) && !defined(__APPLE__)
+#if 1 && !defined(__TINYC__) && (defined(__PIC__) || defined(__PIE__))
 		"call getenv@plt;"
-#elif defined(__APPLE__)
-                "call _getenv;"
 #else
 		"call getenv;"
 #endif
@@ -3722,17 +3758,28 @@ void asm_dot_test(void)
 #endif
 }
 
+void asm_pcrel_test(void)
+{
+    unsigned o1, o2;
+    /* subtract text-section label from forward or other-section label */
+    asm("1: mov $2f-1b,%%eax; mov %%eax,%0" : "=m"(o1));
+    /* verify ... */
+    asm("2: lea 2b"RX",%eax; lea 1b"RX",%ecx; sub %ecx,%eax");
+    asm("mov %%eax,%0" : "=m"(o2));
+    printf("%s : %x\n", __FUNCTION__, o1 - o2); /* should be zero */
+}
+
 void asm_test(void)
 {
     char buf[128];
     unsigned int val, val2;
     struct struct123 s1;
-    struct struct1231 s2 = { (unsigned long)&s1 };
+    struct struct1231 s2 = { (word)&s1 };
     /* Hide the outer base_func, but check later that the inline
        asm block gets the outer one.  */
     int base_func = 42;
     void override_func3 (void);
-    unsigned long asmret;
+    word asmret;
 #ifdef BOOL_ISOC99
     _Bool somebool;
 #endif
@@ -3783,8 +3830,8 @@ void asm_test(void)
     printf("asmstr: %s\n", get_asm_string());
     asm_local_label_diff();
 #endif
-    asm_local_statics();
 #endif
+    asm_local_statics();
 #ifndef __clang__
     /* clang can't deal with the type change */
     /* Check that we can also load structs of appropriate layout
@@ -3813,6 +3860,7 @@ void asm_test(void)
     test_asm_dead_code();
     test_asm_call();
     asm_dot_test();
+    asm_pcrel_test();
     return;
  label1:
     goto label2;
@@ -3836,6 +3884,40 @@ int constant_p_var;
 
 int func(void);
 
+
+/* __builtin_clz and __builtin_ctz return random values for 0 */
+static void builtin_test_bits(unsigned long long x, int cnt[])
+{
+#if GCC_MAJOR >= 4
+    cnt[0] += __builtin_ffs(x);
+    cnt[1] += __builtin_ffsl(x);
+    cnt[2] += __builtin_ffsll(x);
+
+    if ((unsigned int) x) cnt[3] += __builtin_clz(x);
+    if ((unsigned long) x) cnt[4] += __builtin_clzl(x);
+    if ((unsigned long long) x) cnt[5] += __builtin_clzll(x);
+
+    if ((unsigned int) x) cnt[6] += __builtin_ctz(x);
+    if ((unsigned long) x) cnt[7] += __builtin_ctzl(x);
+    if ((unsigned long long) x) cnt[8] += __builtin_ctzll(x);
+
+#if GCC_MAJOR >= 6 && (CC_NAME != CC_clang || GCC_MAJOR >= 11)
+/* Apple clang 10 does not have __builtin_clrsb[l[l]] */
+    cnt[9] += __builtin_clrsb(x);
+    cnt[10] += __builtin_clrsbl(x);
+    cnt[11] += __builtin_clrsbll(x);
+#endif
+
+    cnt[12] += __builtin_popcount(x);
+    cnt[13] += __builtin_popcountl(x);
+    cnt[14] += __builtin_popcountll(x);
+
+    cnt[15] += __builtin_parity(x);
+    cnt[16] += __builtin_parityl(x);
+    cnt[17] += __builtin_parityll(x);
+#endif
+}
+
 void builtin_test(void)
 {
     short s;
@@ -3853,29 +3935,29 @@ void builtin_test(void)
     COMPAT_TYPE(char *, unsigned char *);
     COMPAT_TYPE(char *, signed char *);
     COMPAT_TYPE(char *, char *);
-/* space is needed because tcc preprocessor introduces a space between each token */
-    COMPAT_TYPE(char * *, void *); 
+    COMPAT_TYPE(char **, void *);
 #endif
     printf("res1 = %d\n", __builtin_constant_p(1));
     printf("res2 = %d\n", __builtin_constant_p(1 + 2));
     printf("res3 = %d\n", __builtin_constant_p(&constant_p_var));
     printf("res4 = %d\n", __builtin_constant_p(constant_p_var));
     printf("res5 = %d\n", __builtin_constant_p(100000 / constant_p_var));
-#ifdef __clang__
-    /* clang doesn't regard this as constant expression */
-    printf("res6 = 1\n");
+    printf("res6 = %d\n", __builtin_constant_p(i && 1));
+    printf("res7 = %d\n", __builtin_constant_p("hi"));
+    printf("res8 = %d\n", __builtin_constant_p(func()));
+#ifndef __clang__
+    printf("res10 = %d\n", __builtin_constant_p(i && 0));
+    printf("res11 = %d\n", __builtin_constant_p(i * 0));
+    printf("res12 = %d\n", __builtin_constant_p(i && 0 ? i : 34));
+    printf("res13 = %d\n", __builtin_constant_p((1,7)));
 #else
-    printf("res6 = %d\n", __builtin_constant_p(i && 0));
+    /* clang doesn't regard these as constant expression */
+    printf("res10 = 1\n");
+    printf("res11 = 1\n");
+    printf("res12 = 1\n");
+    printf("res13 = 0\n");
 #endif
-    printf("res7 = %d\n", __builtin_constant_p(i && 1));
-#ifdef __clang__
-    /* clang doesn't regard this as constant expression */
-    printf("res8 = 1\n");
-#else
-    printf("res8 = %d\n", __builtin_constant_p(i && 0 ? i : 34));
-#endif
-    printf("res9 = %d\n", __builtin_constant_p("hi"));
-    printf("res10 = %d\n", __builtin_constant_p(func()));
+
     s = 1;
     ll = 2;
     i = __builtin_choose_expr (1 != 0, ll, s);
@@ -3888,9 +3970,26 @@ void builtin_test(void)
     printf("bce: %d\n", i);
 
     //printf("bera: %p\n", __builtin_extract_return_addr((void*)43));
+
+    {
+	int cnt[18];
+	unsigned long long r = 0;
+
+	memset(cnt, 0, sizeof(cnt));
+	builtin_test_bits(0, cnt);
+	builtin_test_bits(0xffffffffffffffffull, cnt);
+        for (i = 0; i < 64; i++)
+	    builtin_test_bits(1ull << i, cnt);
+        for (i = 0; i < 1000; i++) {
+	    r = 0x5851f42d4c957f2dull * r + 0x14057b7ef767814full;
+	    builtin_test_bits(r, cnt);
+	}
+	for (i = 0; i < 18; i++)
+	    printf ("%d %d\n", i, cnt[i]);
+    }
 }
 
-#ifdef _WIN32
+#if defined _WIN32 || (defined __APPLE__ && GCC_MAJOR >= 15)
 void weak_test(void) {}
 #else
 extern int __attribute__((weak)) weak_f1(void);
@@ -4271,11 +4370,14 @@ void func_arg_test(void)
 /* # define ACCEPT_LF_IN_STRINGS */
 #endif
 
+#define	tcc_test()
+
 /* keep this as the last test because GCC messes up line-numbers
    with the ^L^K^M characters below */
 void whitespace_test(void)
 {
     char *str;
+    int tcc_test = 1;
 
 #if 1
     pri\
@@ -4323,6 +4425,12 @@ ntf("min=%d\n", 4);
 "12\\
 063\\
 n 456\"\n");
+
+    printf ("%d\n",
+#if 1
+	    tcc_test
+#endif
+            );
 
 }
 

@@ -30,7 +30,7 @@ enum float_abi {
 #ifdef NEED_RELOC_TYPE
 /* Returns 1 for a code relocation, 0 for a data relocation. For unknown
    relocations, returns -1. */
-int code_reloc (int reloc_type)
+ST_FUNC int code_reloc (int reloc_type)
 {
     switch (reloc_type) {
 	case R_ARM_MOVT_ABS:
@@ -68,7 +68,7 @@ int code_reloc (int reloc_type)
 /* Returns an enumerator to describe whether and when the relocation needs a
    GOT and/or PLT entry to be created. See tcc.h for a description of the
    different values. */
-int gotplt_entry_type (int reloc_type)
+ST_FUNC int gotplt_entry_type (int reloc_type)
 {
     switch (reloc_type) {
 	case R_ARM_NONE:
@@ -179,7 +179,7 @@ ST_FUNC void relocate_plt(TCCState *s1)
 #endif
 #endif
 
-void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t addr, addr_t val)
+ST_FUNC void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t addr, addr_t val)
 {
     ElfW(Sym) *sym;
     int sym_index, esym_index;
@@ -202,7 +202,7 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t 
                 if (x & 0x800000)
                     x -= 0x1000000;
                 x <<= 2;
-                blx_avail = (TCC_CPU_VERSION >= 5);
+                blx_avail = (CONFIG_TCC_CPUVER >= 5);
                 is_thumb = val & 1;
                 is_bl = (*(unsigned *) ptr) >> 24 == 0xeb;
                 is_call = (type == R_ARM_CALL || (type == R_ARM_PC24 && is_bl));
@@ -214,7 +214,7 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t 
                 h = x & 2;
                 th_ko = (x & 3) && (!blx_avail || !is_call);
                 if (th_ko || x >= 0x2000000 || x < -0x2000000)
-                    tcc_error("can't relocate value at %x,%d",addr, type);
+                    tcc_error_noabort("can't relocate value at %x,%d",addr, type);
                 x >>= 2;
                 x &= 0xffffff;
                 /* Only reached if blx is avail and it is a call */
@@ -303,7 +303,7 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t 
                      - instruction must be a call (bl) or a jump to PLT */
                 if (!to_thumb || x >= 0x1000000 || x < -0x1000000)
                     if (to_thumb || (val & 2) || (!is_call && !to_plt))
-                        tcc_error("can't relocate value at %x,%d",addr, type);
+                        tcc_error_noabort("can't relocate value at %x,%d",addr, type);
 
                 /* Compute and store final offset */
                 s = (x >> 24) & 1;
@@ -374,7 +374,7 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t 
                 x = (x * 2) / 2;
                 x += val - addr;
                 if((x^(x>>1))&0x40000000)
-                    tcc_error("can't relocate value at %x,%d",addr, type);
+                    tcc_error_noabort("can't relocate value at %x,%d",addr, type);
                 (*(int *)ptr) |= x & 0x7fffffff;
             }
             return;

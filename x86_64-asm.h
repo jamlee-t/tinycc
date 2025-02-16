@@ -83,6 +83,9 @@ ALT(DEF_ASM_OP2(btcw, 0x0fba, 7, OPC_MODRM | OPC_WLX, OPT_IM8, OPT_REGW | OPT_EA
 
 ALT(DEF_ASM_OP2(popcntw, 0xf30fb8, 0, OPC_MODRM | OPC_WLX, OPT_REGW | OPT_EA, OPT_REGW))
 
+ALT(DEF_ASM_OP2(tzcntw, 0xf30fbc, 0, OPC_MODRM | OPC_WLX, OPT_REGW | OPT_EA, OPT_REGW))
+ALT(DEF_ASM_OP2(lzcntw, 0xf30fbd, 0, OPC_MODRM | OPC_WLX, OPT_REGW | OPT_EA, OPT_REGW))
+
      /* prefixes */
      DEF_ASM_OP0(lock, 0xf0)
      DEF_ASM_OP0(rep, 0xf3)
@@ -222,6 +225,8 @@ ALT(DEF_ASM_OP2(shrdw, 0x0fad, 0, OPC_MODRM | OPC_WLX, OPT_REGW, OPT_EA | OPT_RE
 
 ALT(DEF_ASM_OP1(call, 0xff, 2, OPC_MODRM, OPT_INDIR))
 ALT(DEF_ASM_OP1(call, 0xe8, 0, 0, OPT_DISP))
+    DEF_ASM_OP1(callq, 0xff, 2, OPC_MODRM, OPT_INDIR)
+ALT(DEF_ASM_OP1(callq, 0xe8, 0, 0, OPT_DISP))
 ALT(DEF_ASM_OP1(jmp, 0xff, 4, OPC_MODRM, OPT_INDIR))
 ALT(DEF_ASM_OP1(jmp, 0xeb, 0, 0, OPT_DISP8))
 
@@ -533,6 +538,9 @@ ALT(DEF_ASM_OP2(movhps, 0x0f17, 0, OPC_MODRM, OPT_SSE, OPT_EA | OPT_REG32 ))
     DEF_ASM_OP0L(mfence, 0x0fae, 6, OPC_MODRM)
     DEF_ASM_OP0L(sfence, 0x0fae, 7, OPC_MODRM)
     DEF_ASM_OP1(clflush, 0x0fae, 7, OPC_MODRM, OPT_EA)
+
+    /* Control-Flow Enforcement */
+    DEF_ASM_OP0L(endbr64, 0xf30f1e, 7, OPC_MODRM)
 #undef ALT
 #undef DEF_ASM_OP0
 #undef DEF_ASM_OP0L

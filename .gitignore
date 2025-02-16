@@ -16,6 +16,8 @@
 a.out
 tcc_g
 tcc
+tcc_c
+tcc_p
 *-tcc
 libtcc*.def
 
@@ -29,6 +31,7 @@ tags
 TAGS
 tcc.1
 *.pod
+*.tcov
 tcc-doc.html
 tcc-doc.info
 
@@ -45,6 +48,9 @@ win32/include/stddef.h
 win32/include/stdnoreturn.h
 win32/include/varargs.h
 win32/include/tcclib.h
+win32/include/tccdefs.h
+win32/include/stdatomic.h
+win32/include/tgmath.h
 
 tests/tcctest[1234]
 tests/tcctest.gcc

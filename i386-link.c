@@ -25,7 +25,7 @@
 #ifdef NEED_RELOC_TYPE
 /* Returns 1 for a code relocation, 0 for a data relocation. For unknown
    relocations, returns -1. */
-int code_reloc (int reloc_type)
+ST_FUNC int code_reloc (int reloc_type)
 {
     switch (reloc_type) {
 	case R_386_RELATIVE:
@@ -55,7 +55,7 @@ int code_reloc (int reloc_type)
 /* Returns an enumerator to describe whether and when the relocation needs a
    GOT and/or PLT entry to be created. See tcc.h for a description of the
    different values. */
-int gotplt_entry_type (int reloc_type)
+ST_FUNC int gotplt_entry_type (int reloc_type)
 {
     switch (reloc_type) {
 	case R_386_RELATIVE:
@@ -171,7 +171,7 @@ ST_FUNC void relocate_plt(TCCState *s1)
 #endif
 #endif
 
-void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t addr, addr_t val)
+ST_FUNC void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t addr, addr_t val)
 {
     int sym_index, esym_index;
 
@@ -227,7 +227,7 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t 
         case R_386_16:
             if (s1->output_format != TCC_OUTPUT_FORMAT_BINARY) {
             output_file:
-                tcc_error("can only produce 16-bit binary files");
+                tcc_error_noabort("can only produce 16-bit binary files");
             }
             write16le(ptr, read16le(ptr) + val);
             return;
@@ -274,7 +274,7 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t 
                     add32le(ptr + 5, -x);
                 }
                 else
-                    tcc_error("unexpected R_386_TLS_GD pattern");
+                    tcc_error_noabort("unexpected R_386_TLS_GD pattern");
             }
             return;
         case R_386_TLS_LDM:
@@ -297,7 +297,7 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr, addr_t 
                     rel[1].r_info = ELFW(R_INFO)(0, R_386_NONE);
                 }
                 else
-                    tcc_error("unexpected R_386_TLS_LDM pattern");
+                    tcc_error_noabort("unexpected R_386_TLS_LDM pattern");
             }
             return;
         case R_386_TLS_LDO_32:

@@ -2,7 +2,6 @@
 
 // Number of registers available to allocator:
 #define NB_REGS 19 // x10-x17 aka a0-a7, f10-f17 aka fa0-fa7, xxx, ra, sp
-#define NB_ASM_REGS 32
 #define CONFIG_TCC_ASM
 
 #define TREG_R(x) (x) // x = 0..7
@@ -166,7 +165,7 @@ ST_FUNC void gsym_addr(int t_, int a_)
 
 static int load_symofs(int r, SValue *sv, int forstore)
 {
-    int rr, doload = 0;
+    int rr, doload = 0, large_addend = 0;
     int fc = sv->c.i, v = sv->r & VT_VALMASK;
     if (sv->r & VT_SYM) {
         Sym label = {0};
@@ -176,8 +175,9 @@ static int load_symofs(int r, SValue *sv, int forstore)
                     R_RISCV_PCREL_HI20, sv->c.i);
             sv->c.i = 0;
         } else {
-            if (((unsigned)fc + (1 << 11)) >> 12)
-              tcc_error("unimp: large addend for global address (0x%lx)", (long)sv->c.i);
+            if (((unsigned)fc + (1 << 11)) >> 12){
+              large_addend = 1;
+            }
             greloca(cur_text_section, sv->sym, ind,
                     R_RISCV_GOT_HI20, 0);
             doload = 1;
@@ -192,6 +192,11 @@ static int load_symofs(int r, SValue *sv, int forstore)
                   ? R_RISCV_PCREL_LO12_I : R_RISCV_PCREL_LO12_S, 0);
         if (doload) {
             EI(0x03, 3, rr, rr, 0); // ld RR, 0(RR)
+            if (large_addend) {
+                o(0x37 | (6 << 7) | ((0x800 + fc) & 0xfffff000)); //lui t1, high(fc)
+                ER(0x33, 0, rr, rr, 6, 0); // add RR, RR, t1
+                sv->c.i = fc << 20 >> 20;
+            }
         }
     } else if (v == VT_LOCAL || v == VT_LLOCAL) {
         rr = 8; // s0
@@ -234,7 +239,7 @@ ST_FUNC void load(int r, SValue *sv)
         int func3, opcode = is_freg(r) ? 0x07 : 0x03, br;
         size = type_size(&sv->type, &align);
         assert (!is_freg(r) || bt == VT_FLOAT || bt == VT_DOUBLE);
-        if (bt == VT_FUNC) /* XXX should be done in generic code */
+        if (bt == VT_PTR || bt == VT_FUNC) /* XXX should be done in generic code */
           size = PTR_SIZE;
         func3 = size == 1 ? 0 : size == 2 ? 1 : size == 4 ? 2 : 3;
         if (size < 4 && !is_float(sv->type.t) && (sv->type.t & VT_UNSIGNED))
@@ -627,10 +632,14 @@ ST_FUNC void gfunc_call(int nb_args)
     if ((vtop->r & VT_VALMASK) == VT_CMP)
       gv(RC_INT);
 
+
     if (stack_add) {
-        if (stack_add >= 0x1000) {
-            o(0x37 | (5 << 7) | (-stack_add & 0xfffff000)); //lui t0, upper(v)
-            EI(0x13, 0, 5, 5, -stack_add << 20 >> 20); // addi t0, t0, lo(v)
+        if (stack_add >= 0x800) {
+            unsigned int bit11 = (((unsigned int)-stack_add) >> 11) & 1;
+            o(0x37 | (5 << 7) |
+              ((-stack_add + (bit11 << 12)) & 0xfffff000)); //lui t0, upper(v)
+            EI(0x13, 0, 5, 5, ((-stack_add & 0xfff) - bit11 * (1 << 12)));
+                                                         // addi t0, t0, lo(v)
             ER(0x33, 0, 2, 2, 5, 0); // add sp, sp, t0
         }
         else
@@ -757,9 +766,12 @@ done:
     gcall_or_jmp(1);
     vtop -= nb_args + 1;
     if (stack_add) {
-        if (stack_add >= 0x1000) {
-            o(0x37 | (5 << 7) | (stack_add & 0xfffff000)); //lui t0, upper(v)
-            EI(0x13, 0, 5, 5, stack_add << 20 >> 20); // addi t0, t0, lo(v)
+        if (stack_add >= 0x800) {
+            unsigned int bit11 = ((unsigned int)stack_add >> 11) & 1;
+            o(0x37 | (5 << 7) |
+              ((stack_add + (bit11 << 12)) & 0xfffff000)); //lui t0, upper(v)
+            EI(0x13, 0, 5, 5, (stack_add & 0xfff) - bit11 * (1 << 12));
+                                                           // addi t0, t0, lo(v)
             ER(0x33, 0, 2, 2, 5, 0); // add sp, sp, t0
         }
         else
@@ -1382,12 +1394,24 @@ ST_FUNC void ggoto(void)
 
 ST_FUNC void gen_vla_sp_save(int addr)
 {
-    ES(0x23, 3, 8, 2, addr); // sd sp, fc(s0)
+    if (((unsigned)addr + (1 << 11)) >> 12) {
+	o(0x37 | (5 << 7) | ((0x800 + addr) & 0xfffff000)); //lui t0,upper(addr)
+        ER(0x33, 0, 5, 5, 8, 0); // add t0, t0, s0
+        ES(0x23, 3, 5, 2, (int)addr << 20 >> 20); // sd sp, fc(t0)
+    }
+    else
+        ES(0x23, 3, 8, 2, addr); // sd sp, fc(s0)
 }
 
 ST_FUNC void gen_vla_sp_restore(int addr)
 {
-    EI(0x03, 3, 2, 8, addr); // ld sp, fc(s0)
+    if (((unsigned)addr + (1 << 11)) >> 12) {
+	o(0x37 | (5 << 7) | ((0x800 + addr) & 0xfffff000)); //lui t0,upper(addr)
+        ER(0x33, 0, 5, 5, 8, 0); // add t0, t0, s0
+        EI(0x03, 3, 2, 5, (int)addr << 20 >> 20); // ld sp, fc(t0)
+    }
+    else
+        EI(0x03, 3, 2, 8, addr); // ld sp, fc(s0)
 }
 
 ST_FUNC void gen_vla_alloc(CType *type, int align)

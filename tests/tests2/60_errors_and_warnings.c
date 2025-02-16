@@ -191,15 +191,18 @@ void * _Alignas(16) p1;
 
 #define ONE 0
  _Static_assert(ONE == 0, "don't show me this");
- _Static_assert(ONE == 1, "ONE is not 1");
+ struct x{ _Static_assert(ONE == 1, "ONE is not 1"); };
 
 #elif defined test_static_assert_2
  _Static_assert(1, "1"" is 1");
- _Static_assert(0, "0"" is 0");
+struct y {  _Static_assert(0, "0"" is 0"); };
 
 #elif defined test_static_assert_c2x
  _Static_assert(1);
- _Static_assert(0);
+struct z {  _Static_assert(0); }
+
+#elif defined test_static_assert_empty_string
+ _Static_assert(0,"");
 
 #elif defined test_void_array
  void t[3];
@@ -395,6 +398,14 @@ struct S2 {
 extern int array[2];
 int array[] = { 1, 2, 3 };
 
+#elif defined test_incompatible_local_redef
+void foo (void)
+{
+  typedef int localfunctype (int);
+  extern localfunctype func2;
+  typedef void localfunctype (int, int);
+}
+
 #elif defined test_cast_from_void
 void v() {}
 int f() { return v(); }
@@ -451,5 +462,58 @@ int main() {
 #elif defined test_error_string
 #error \123\\
 456
+
+#elif defined test_error_incomplete_type
+struct A;
+void f(struct A *);
+
+int main()
+{
+    f(&(struct A){});
+}
+
+struct A {
+    int x;
+};
+
+#elif defined test_pp_error_1
+# if //no expression
+# endif
+#elif defined test_pp_error_2
+# if X(1,2) //undefined function macro
+# endif
+
+#elif defined test_pointer_plus_double
+
+int *invalid_operation(int *p, double d)
+{
+    return p + d;
+}
+
+#elif defined test_duplicate_case
+
+int main()
+{
+    unsigned int x;
+    switch (x) {
+        case -1 ... 0: /* empty case range with unsigned */
+        case 3:
+        case 1:
+        case 2:
+        case 3: /* show this line number in error */
+        case 4:
+        case 5:
+    }
+}
+#elif defined test_normal_funcargs || defined test_reverse_funcargs
+
+#ifdef test_reverse_funcargs
+# pragma comment(option, "-freverse-funcargs")
+#endif
+int printf(const char*, ...);
+int main()
+{
+    printf(" %d %d %d\n", printf("1"), printf("22"), printf("333"));
+}
 
 #endif

@@ -12,19 +12,11 @@ SKIP = 34_array_assignment.test # array assignment is not in C standard
 ifeq (-$(CONFIG_arm_eabi)-$(CONFIG_arm_vfp)-,-yes--)
  SKIP += 22_floating_point.test
 endif
-ifdef CONFIG_OSX
- SKIP += 40_stdio.test 42_function_pointer.test
-endif
-ifeq ($(ARCH),x86_64)
- SKIP += 73_arm64.test
-endif
 ifeq (,$(filter i386,$(ARCH)))
  SKIP += 98_al_ax_extend.test 99_fastcall.test
 endif
 ifeq (,$(filter i386 x86_64,$(ARCH)))
  SKIP += 85_asm-outside-function.test # x86 asm
- SKIP += 124_atomic_counter.test
- SKIP += 125_atomic_misc.test # currently only x86 supported
  SKIP += 127_asm_goto.test    # hardcodes x86 asm
 endif
 ifeq ($(CONFIG_backtrace),no)
@@ -38,6 +30,7 @@ ifeq ($(CONFIG_bcheck),no)
  SKIP += 115_bound_setjmp.test
  SKIP += 116_bound_setjmp2.test
  SKIP += 117_builtins.test
+ SKIP += 126_bound_global.test
 endif
 ifeq ($(CONFIG_dll),no)
  SKIP += 113_btdll.test # no shared lib support yet
@@ -59,9 +52,6 @@ ifneq (,$(filter OpenBSD FreeBSD NetBSD,$(TARGETOS)))
  SKIP += 114_bound_signal.test # libc problem signal/fork
  SKIP += 116_bound_setjmp2.test # No TLS_FUNC/TLS_VAR in bcheck.c
 endif
-ifneq (,$(filter Darwin,$(TARGETOS)))
- SKIP += 126_bound_global.test # bt-exe.c problem on apple
-endif
 
 # Some tests might need arguments
 ARGS =
@@ -75,6 +65,10 @@ NORUN =
 # Some tests might need different flags
 FLAGS =
 76_dollars_in_identifiers.test : FLAGS += -fdollars-in-identifiers
+ifneq (-$(CONFIG_WIN32)-,-yes-)
+22_floating_point.test: FLAGS += -lm
+24_math_library.test: FLAGS += -lm
+endif
 
 # These tests run several snippets from the same file one by one
 60_errors_and_warnings.test : FLAGS += -dt
@@ -112,8 +106,8 @@ GEN-ALWAYS =
 113_btdll.test: T1 = \
     $(TCC) -bt $1 -shared -D DLL=1 -o a1$(DLLSUF) && \
     $(TCC) -bt $1 -shared -D DLL=2 -o a2$(DLLSUF) && \
-    $(TCC) -bt $1 a1$(DLLSUF) a2$(DLLSUF) -Wl,-rpath=. -o a.exe && \
-    ./a.exe
+    $(TCC) -bt $1 a1$(DLLSUF) a2$(DLLSUF) -Wl,-rpath=. -o $(basename $@).exe && \
+    ./$(basename $@).exe
 
 114_bound_signal.test: FLAGS += -b
 114_bound_signal.test: NORUN = true # tcc -run does not support fork and -b and SELINUX
@@ -128,6 +122,8 @@ endif
 124_atomic_counter.test: FLAGS += -pthread
 126_bound_global.test: FLAGS += -b
 126_bound_global.test: NORUN = true
+128_run_atexit.test: FLAGS += -dt
+132_bound_test.test: FLAGS += -b
 
 # Filter source directory in warnings/errors (out-of-tree builds)
 FILTER = 2>&1 | sed -e 's,$(SRC)/,,g'
@@ -140,7 +136,7 @@ all test tests2.all: $(filter-out $(SKIP),$(TESTS))
 	@$(call T1,$<) $(T3)
 
 T1 = $(TCC) $(FLAGS) $(T2) $(ARGS)
-T2 = $(if $(NORUN),$1 -o a.exe && ./a.exe,-run $1)
+T2 = $(if $(NORUN),$1 -o $(basename $@).exe && ./$(basename $@).exe,-run $1)
 T3 = $(FILTER) >$*.output 2>&1 || true \
      && diff -Nbu $(filter %.expect,$^) $*.output \
      && rm -f $*.output $(filter $*.expect,$(GEN-ALWAYS))
@@ -168,7 +164,7 @@ F2 = $1 UPDATE="$(patsubst %.test,%.expect,$1)"
 
 # using TCC for .expect if -dt in FLAGS
 GEN = $(if $(filter -dt -bt -b,$(FLAGS)),$(GEN-TCC),$(GEN-CC))
-GEN-CC = $(CC) -w -std=gnu99 $(FLAGS) $1 -o a.exe && ./a.exe $(ARGS)
+GEN-CC = $(CC) -w -std=gnu99 $(FLAGS) $1 -o $(basename $@).exe && ./$(basename $@).exe $(ARGS)
 GEN-TCC = $(T1)
 GEN-MSC = $(MS-CC) $1 && ./$(basename $@).exe
 MS-CC = cl
@@ -181,4 +177,4 @@ $(sort $(GEN-ALWAYS) $(UPDATE)) : force
 force:
 
 clean :
-	rm -f fred.txt *.output a.exe *.dll *.so *.def $(GEN-ALWAYS)
+	rm -f fred.txt *.output *.exe *.dll *.so *.def $(GEN-ALWAYS)
